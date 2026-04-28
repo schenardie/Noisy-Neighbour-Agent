@@ -1,0 +1,149 @@
+# Noisy Neighbour Promptbook
+# A guided, step-by-step Security Copilot promptbook for identifying Intune
+# noisy neighbour automation patterns in the last 6 months.
+#
+# How to use:
+#   1. Install this promptbook in Microsoft Security Copilot
+#   2. Ensure the NoisyNeighbourAgent plugin is enabled
+#   3. Run the promptbook to get a full analysis report
+
+Name: NoisyNeighbour_Promptbook
+DisplayName: Intune Noisy Neighbour Detection - 6 Month Analysis
+Description: >-
+  A step-by-step Security Copilot promptbook that retrieves Microsoft Intune
+  audit logs for the last 6 months, analyzes them for noisy neighbour automation
+  patterns, and produces a comprehensive remediation report. Identifies accounts
+  and automations that repeatedly update the same settings at consistent
+  intervals (hourly, daily, weekly).
+
+Prompts:
+  - Name: Step1_CalculateDateRange
+    Content: |-
+      Calculate today's date and the date exactly 180 days ago (6 months).
+      Format both dates in ISO 8601 UTC format (YYYY-MM-DDTHH:MM:SSZ).
+      I will need these dates to filter Microsoft Intune audit logs.
+      Show me both dates clearly labeled as "Start Date" and "End Date".
+
+  - Name: Step2_RetrieveAuditLogs_Page1
+    Content: |-
+      Using the NoisyNeighbourAgent plugin, call the GetIntuneAuditEvents skill
+      to retrieve Microsoft Intune audit events for the last 6 months.
+
+      Use these parameters:
+      - $filter: activityDateTime ge [Start Date from Step 1]
+      - $select: id,displayName,componentName,activityDateTime,activityType,activityOperationType,activityResult,correlationId,actor,resources,category
+      - $orderby: activityDateTime asc
+      - $top: 999
+
+      Report back:
+      1. How many events were returned in this first page
+      2. Whether an @odata.nextLink is present (indicating more pages)
+      3. A brief summary of the date range of events returned
+
+  - Name: Step3_RetrieveRemainingPages
+    Content: |-
+      If the previous response included an @odata.nextLink, continue retrieving
+      additional pages using the GetIntuneAuditEvents skill with the $skipToken
+      extracted from the @odata.nextLink URL.
+
+      Keep retrieving pages until no more @odata.nextLink is returned.
+
+      Report the total number of audit events collected across all pages and
+      the full date range covered.
+
+      If no @odata.nextLink was present in the previous step, confirm that all
+      events have been retrieved and proceed to analysis.
+
+  - Name: Step4_SummaryBeforeAnalysis
+    Content: |-
+      Before running the full pattern analysis, provide a quick overview of the
+      collected Intune audit log data:
+
+      1. Total number of events collected
+      2. Date range: earliest event to latest event
+      3. Top 10 most frequent activityType values and their counts
+      4. Top 10 most active actors (by userPrincipalName or applicationDisplayName)
+         and their event counts
+      5. Breakdown of activityResult values (success vs failure counts)
+      6. Number of unique actors identified (users vs service principals)
+
+      This summary will help me understand the scope of the analysis.
+
+  - Name: Step5_AnalyzePatterns
+    Content: |-
+      Using the NoisyNeighbourAgent plugin, call the AnalyzeIntuneNoisyNeighbours
+      skill with all the audit log data collected in the previous steps.
+
+      Pass the complete JSON array of audit events as the auditLogData input.
+
+      Perform the full noisy neighbour pattern analysis looking for:
+      - Actors making the same changes at consistent hourly intervals
+      - Actors making the same changes at consistent daily intervals
+      - Actors making the same changes at consistent weekly intervals
+      - Service principals or managed identities performing idempotent overwrites
+
+  - Name: Step6_PrioritizeFindings
+    Content: |-
+      Based on the noisy neighbour analysis results, create a prioritized
+      action list:
+
+      **CRITICAL (Action required immediately)**:
+      - Patterns occurring more than 50 times per day
+      - Service principals not owned by your organization
+      - Patterns affecting security-sensitive Intune settings
+
+      **HIGH (Action required within 1 week)**:
+      - Patterns occurring 10-50 times per day
+      - Patterns affecting device compliance policies
+      - Patterns with wide resource scope (many devices affected)
+
+      **MEDIUM (Review and plan remediation)**:
+      - Patterns occurring 3-10 times per day
+      - User-initiated patterns that could be automated differently
+
+      **LOW (Monitor)**:
+      - Patterns occurring less than 3 times per day
+      - Patterns with clear business justification
+
+      For each severity level, list the specific actors and actions.
+
+  - Name: Step7_RemediationPlan
+    Content: |-
+      For each confirmed noisy neighbour pattern identified, create a specific
+      remediation plan:
+
+      1. **Identify the owner**: How to find who owns the account or automation
+         making repetitive changes
+
+      2. **Verify necessity**: Questions to ask to determine if the repetitive
+         changes serve a legitimate business purpose
+
+      3. **Remediation options** (choose the most appropriate):
+         a. Disable the automation entirely if changes are unnecessary
+         b. Implement change detection to only trigger when values actually differ
+         c. Increase the interval between checks if daily/weekly is sufficient
+         d. Use Intune compliance baselines instead of polling
+         e. Escalate to Microsoft Support if the actor is Microsoft-managed
+
+      4. **Verification steps**: How to confirm the noisy neighbour behavior
+         has stopped after remediation
+
+      Present this as a concrete action plan with responsible parties for
+      each identified pattern.
+
+  - Name: Step8_ExecutiveSummary
+    Content: |-
+      Create a concise executive summary of the Intune noisy neighbour analysis
+      suitable for sharing with management and the Microsoft support team.
+
+      Include:
+      - Total audit events analyzed and time period covered
+      - Number of noisy neighbour patterns identified
+      - Estimated performance impact (events per day being generated unnecessarily)
+      - Top 3 most impactful patterns with owner and action required
+      - Overall risk assessment (Critical/High/Medium/Low)
+      - Recommended immediate actions
+      - Timeline for full remediation
+
+      Format this as a professional security assessment that can be included in
+      a Microsoft support ticket or management report.

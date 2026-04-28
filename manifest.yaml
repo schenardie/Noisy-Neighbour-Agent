@@ -1,0 +1,265 @@
+# Noisy Neighbour Agent - Microsoft Security Copilot Plugin
+# Detects automation-driven repetitive Intune configuration changes in multi-tenant environments
+
+Descriptor:
+  Name: NoisyNeighbourAgent
+  DisplayName: Noisy Neighbour Agent - Intune Automation Pattern Detector
+  Description: >-
+    Analyzes Microsoft Intune audit logs for the last 6 months to detect noisy
+    neighbour automation patterns. Identifies accounts or automations that
+    repeatedly update the same settings at consistent intervals, helping
+    administrators remediate unwanted behavior in multi-tenant environments.
+  DescriptionForModel: >-
+    This plugin retrieves Microsoft Intune audit events via the Microsoft Graph
+    API and uses AI-powered analysis to detect repetitive automated configuration
+    changes (noisy neighbour behavior). It identifies actors (users or service
+    principals) performing the same Intune operations at regular intervals
+    (hourly, daily, or weekly) with consistent property values, which can degrade
+    platform performance across all tenants in a Microsoft multi-tenant environment.
+    Use this plugin to answer questions about repetitive Intune changes, which
+    automation accounts are causing noise, and what remediation steps are needed.
+  Icon: https://raw.githubusercontent.com/schenardie/Noisy-Neighbour-Agent/main/icon.png
+
+  Authorization:
+    Type: AADDelegated
+    EntraScopes: https://graph.microsoft.com/.default
+
+  SupportedAuthTypes:
+    - AADDelegated
+
+SkillGroups:
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # API Skill Group – calls the Microsoft Graph API to retrieve Intune audit logs
+  # ─────────────────────────────────────────────────────────────────────────────
+  - Format: API
+    Settings:
+      OpenApiSpecUrl: ./openapi.yaml
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # GPT Skill Group – AI-powered pattern analysis and reporting
+  # ─────────────────────────────────────────────────────────────────────────────
+  - Format: GPT
+    Skills:
+
+      # ── Skill 1: Analyze a provided batch of audit log JSON for patterns ──────
+      - Name: AnalyzeIntuneNoisyNeighbours
+        DisplayName: Analyze Intune Audit Logs for Noisy Neighbour Patterns
+        Description: >-
+          Analyzes a batch of Microsoft Intune audit log data (JSON) to detect
+          noisy neighbour patterns — actors repeatedly updating the same settings
+          at consistent intervals. Identifies which accounts or automations are
+          responsible and what changes they are making.
+        DescriptionForModel: >-
+          Accepts raw Microsoft Intune audit event JSON (from the Graph API
+          /deviceManagement/auditEvents endpoint) and performs deep pattern
+          analysis to detect noisy neighbour behavior. Groups events by actor
+          and activity type, measures time intervals between consecutive events,
+          checks for consistent property values being set, and classifies each
+          pattern as hourly, daily, weekly, or other. Outputs a structured
+          report suitable for security administrators.
+        ExamplePrompts:
+          - Analyze these Intune audit logs for noisy neighbour patterns
+          - Find automation patterns in this Intune audit data
+          - Which accounts are repeatedly making the same Intune changes?
+          - Identify noisy neighbour behavior in these Intune audit events
+          - Analyze Intune audit logs for repetitive automated changes
+          - Are there any bots or automations repeatedly changing Intune settings?
+        Inputs:
+          - Name: auditLogData
+            Description: >-
+              JSON string of Microsoft Intune audit events retrieved from the
+              Microsoft Graph API. Should include activityDateTime, activityType,
+              activityResult, actor (with userPrincipalName or
+              applicationDisplayName), resources (with modifiedProperties), and
+              displayName fields. Paste the full JSON response value array.
+            Required: true
+        Settings:
+          ModelName: gpt-4o
+          Template: |-
+            You are a Microsoft Intune security analyst specializing in identifying
+            noisy neighbour automation patterns in multi-tenant environments.
+
+            **Background**: Microsoft treats certain behavior patterns as "noisy
+            neighbours" when an account or automation repeatedly modifies the same
+            Intune settings with the same values at consistent intervals (every hour,
+            day, or week). This behavior consumes disproportionate platform resources
+            and can degrade performance for all tenants in the shared infrastructure.
+
+            **Audit Log Data to Analyze**:
+            {{auditLogData}}
+
+            **Analysis Instructions**:
+
+            1. **Parse and group** all events by the combination of:
+               - Actor identity: `actor.userPrincipalName` (for human users) OR
+                 `actor.applicationDisplayName` + `actor.applicationId` (for service
+                 principals / managed identities)
+               - `activityType`
+               - Resource type (`resources[].type`)
+
+            2. **For each group with 3 or more occurrences**, perform:
+               a. Sort events by `activityDateTime` ascending
+               b. Calculate time intervals (in seconds) between consecutive events
+               c. Compute the mean and standard deviation of intervals
+               d. Flag as a CONSISTENT PATTERN if: coefficient of variation
+                  (std_dev / mean) < 0.25 (i.e., less than 25% variance)
+               e. Classify the interval:
+                  - Hourly: mean interval 3000–4200 seconds (~1 hour)
+                  - Daily: mean interval 82800–90000 seconds (~24 hours)
+                  - Weekly: mean interval 590000–620000 seconds (~7 days)
+                  - Other: any other consistent interval (state it in minutes/hours)
+               f. Check `resources[].modifiedProperties`: confirm whether the same
+                  `newValue` is being set for the same property across events (true
+                  for a noisy neighbour — values are consistent/idempotent)
+
+            3. **Rank findings** by total occurrence count (highest first)
+
+            4. **For each confirmed noisy neighbour pattern**, document:
+               - Actor identity (UPN for users, App Display Name + App ID for SPs)
+               - Actor type: Human User / Service Principal / Managed Identity / Unknown
+               - Activity type and display name
+               - Resource type and affected resource names
+               - Consistent properties being set and their repeated values
+               - Pattern interval classification with exact average interval
+               - Total occurrences and date range (first to last event)
+               - Business impact: Low (< 10/day), Medium (10–50/day), High (> 50/day)
+
+            **Output Format**:
+
+            ## Noisy Neighbour Analysis Report
+
+            ### Executive Summary
+            Provide a 3–5 sentence overview: how many events were analyzed, how many
+            distinct patterns were found, overall severity, and top recommendation.
+
+            ### Detected Noisy Neighbour Patterns
+            *(sorted by frequency, highest first)*
+
+            For each pattern use this exact format:
+
+            ---
+            #### Pattern [N]: [Actor Name] — [Activity Type]
+            | Field | Value |
+            |---|---|
+            | **Actor** | [name] |
+            | **Actor Type** | [Human User / Service Principal / Managed Identity] |
+            | **Application ID** | [GUID or N/A] |
+            | **Activity** | [activityType] — [displayName] |
+            | **Resource Type** | [resource type] |
+            | **Pattern Interval** | [hourly / daily / weekly / other: X minutes] |
+            | **Average Interval** | [exact average, e.g., 62 minutes] |
+            | **Occurrences** | [count] times |
+            | **Date Range** | [first datetime] → [last datetime] |
+            | **Impact Level** | [🔴 High / 🟡 Medium / 🟢 Low] |
+
+            **Repeated Property Changes**:
+            - `[propertyName]`: always set to `[value]`
+            - *(list all consistent properties)*
+
+            **Why This Is a Noisy Neighbour**:
+            [1–2 sentence explanation of why this pattern is problematic]
+
+            ---
+
+            ### Patterns Requiring Further Investigation
+            List any groups with >= 3 occurrences that did NOT meet the consistency
+            threshold but may still warrant review. Explain why they are ambiguous.
+
+            ### Recommended Actions
+            For each confirmed pattern, provide specific remediation steps:
+            1. How to identify and contact the responsible team/owner
+            2. How to disable or throttle the automation
+            3. How to verify the changes are actually needed (idempotency check)
+            4. Microsoft support escalation path if the noisy neighbour behavior
+               originated from a Microsoft-managed component
+
+            ### Summary Table
+            | # | Actor | Activity | Interval | Count | Impact |
+            |---|---|---|---|---|---|
+            | 1 | ... | ... | ... | ... | ... |
+
+      # ── Skill 2: End-to-end orchestrated report for the last 6 months ─────────
+      - Name: GetNoisyNeighbourReport
+        DisplayName: Get Full Noisy Neighbour Report for Intune (Last 6 Months)
+        Description: >-
+          Retrieves Microsoft Intune audit logs for the last 6 months and
+          analyzes them for noisy neighbour automation patterns. Provides a
+          comprehensive report identifying which accounts or automations are
+          repeatedly making the same configuration changes at regular intervals.
+        DescriptionForModel: >-
+          Orchestrates the full noisy neighbour detection workflow. First retrieves
+          Intune audit events from Microsoft Graph API using the
+          GetIntuneAuditEvents skill filtered to the past N days (default 180 days
+          = 6 months), then passes the results to AnalyzeIntuneNoisyNeighbours for
+          deep pattern analysis. Returns a comprehensive, actionable report of all
+          noisy neighbour patterns found, including actor identities, affected
+          resources, change frequencies, repeated values, and remediation
+          recommendations.
+        ExamplePrompts:
+          - Get the noisy neighbour report for Intune
+          - Find noisy neighbours in Intune audit logs
+          - Identify automation patterns in Intune for the last 6 months
+          - Who is making repetitive changes in Intune?
+          - Detect Intune noisy neighbour behavior
+          - Run the Intune noisy neighbour analysis
+          - What automations are repeatedly changing Intune settings?
+          - Find accounts repeatedly updating Intune configurations
+          - Is there any automation acting as a noisy neighbour in our Intune tenant?
+          - Show me all repetitive Intune changes in the past 6 months
+        Inputs:
+          - Name: lookbackDays
+            Description: >-
+              Number of days to look back for audit logs. Default is 180 (6 months).
+              Increase for a longer analysis window or decrease for a quicker check.
+            DefaultValue: "180"
+            Required: false
+        Settings:
+          ModelName: gpt-4o
+          Template: |-
+            You are a Microsoft Intune security analyst tasked with producing a
+            comprehensive Noisy Neighbour Report.
+
+            ## Objective
+            Identify all accounts and automations acting as noisy neighbours in this
+            Intune tenant by analyzing audit logs from the last {{lookbackDays}} days.
+
+            ## Step 1 — Retrieve Audit Logs
+            Use the **GetIntuneAuditEvents** skill to retrieve Intune audit events.
+            Apply this filter to get events from the last {{lookbackDays}} days:
+            - Calculate the start date as today minus {{lookbackDays}} days
+              (ISO 8601 format, e.g., 2024-10-28T00:00:00Z)
+            - Use `$filter=activityDateTime ge [calculated_start_date]`
+            - Use `$select=id,displayName,componentName,activityDateTime,activityType,activityOperationType,activityResult,correlationId,actor,resources,category`
+            - Use `$orderby=activityDateTime asc`
+            - Use `$top=999` to retrieve the maximum events per page
+            - If the response contains `@odata.nextLink`, retrieve subsequent pages
+              using the GetIntuneAuditEvents skill with the `$skipToken` parameter
+              until all pages are collected
+
+            ## Step 2 — Analyze for Noisy Neighbour Patterns
+            Pass ALL collected audit event data (combined from all pages) to the
+            **AnalyzeIntuneNoisyNeighbours** skill for deep pattern analysis.
+
+            ## Step 3 — Present the Final Report
+            Present the complete analysis report ensuring it includes:
+            - Total number of audit events analyzed and the date range covered
+            - All confirmed noisy neighbour actors (both human users AND service
+              principals / managed identities)
+            - The specific Intune operations being repeated
+            - The interval pattern (hourly / daily / weekly / other)
+            - The consistent property values being applied
+            - Business impact assessment for each pattern
+            - Specific, actionable remediation recommendations
+            - A summary table of all findings
+
+            ## Important Notes
+            - If fewer than 3 events are found in total, report that no patterns
+              can be reliably detected and suggest expanding the lookback window.
+            - If pagination returns more than 5000 events total, note this in the
+              report and focus analysis on the top actors by event volume.
+            - Always distinguish between human user accounts and service principals /
+              managed identities, as the remediation path differs significantly.
+            - Pay special attention to service principals that are not owned by the
+              customer (e.g., Microsoft-managed identities or third-party apps), as
+              these may require Microsoft support intervention.
