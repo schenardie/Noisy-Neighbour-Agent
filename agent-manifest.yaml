@@ -97,10 +97,15 @@ SkillGroups:
             # Step 2 - Broad scan retrieval
 
             Call GetIntuneAuditEvents with:
-            - $filter: activityDateTime ge {startDate} and activityDateTime le {endDate}
+            - $filter: activityDateTime ge {startDate}
+              (use ONLY the lower bound ge operator - do NOT add an le upper bound)
             - $orderby: activityDateTime desc
             - $top: 250
             - $select: id,displayName,componentName,category,activityDateTime,activityType,activityOperationType,activityResult,actor
+
+            Important: The Intune audit events API only reliably supports the ge
+            operator on activityDateTime. Never add an le upper bound to the filter
+            as it causes the API to return zero results.
 
             Focus on write-like operations:
             - activityOperationType in: patch, create, delete, setReference, deleteReference
@@ -154,8 +159,8 @@ SkillGroups:
             # Step 6 - Output
 
             Start the response with a retrieval evidence block:
-            - Start Date (UTC)
-            - End Date (UTC)
+            - Start Date (UTC): the ge filter date used
+            - End Date (UTC): derived from the last activityDateTime in results, or current UTC if no results
             - Total events retrieved
             - Pages retrieved
             - Partial or complete scan
