@@ -1,9 +1,9 @@
 Descriptor:
   Name: NoisyNeighbourAgentInteractive
-  DisplayName: Noisy Neighbour Agent Interactive
+  DisplayName: Intune Noisy Neighbour Plugin
   Description: >-
-    Interactive Security Copilot agent for investigating Microsoft Intune noisy
-    neighbour automation patterns using real audit events from Microsoft Graph.
+    Plugin for investigating Microsoft Intune audit logs and identify noisy
+    neighbour automation patterns.
   Icon: https://raw.githubusercontent.com/schenardie/Noisy-Neighbour-Agent/main/icon.png
 
   Authorization:
