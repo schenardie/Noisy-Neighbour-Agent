@@ -107,36 +107,56 @@ SkillGroups:
             operator on activityDateTime. Never add an le upper bound to the filter
             as it causes the API to return zero results.
 
-            Focus on write-like operations:
-            - activityOperationType in: patch, create, delete, setReference, deleteReference
-            - Or activityType containing PUT or PATCH verbs.
+            Focus exclusively on patch operations:
+            - activityOperationType eq 'patch'
+            - Or activityType containing the word 'Patch'
+            Do NOT flag create, delete, setReference, or deleteReference as noisy
+            neighbour signals. A resource can only be deleted once, so repeated
+            deletes are impossible. Creates and deletes are intentional lifecycle
+            actions. Only patch (update) operations can be repeated unnecessarily
+            against the same target.
 
             If @odata.nextLink is returned, continue paginating up to 10 pages maximum.
             Track: total events retrieved, pages retrieved, first and last activityDateTime seen.
 
-            If zero events are returned, stop and report that no audit events were found
-            in the requested time window.
+            If zero patch events are returned, stop and report that no patch audit
+            events were found in the requested time window.
 
             # Step 3 - Pattern detection
 
-            Across all retrieved pages, group events by:
+            Across all retrieved pages, group patch events by:
             - actor identity (userPrincipalName or applicationDisplayName)
             - activityType
-            - resource type
+            - specific resource target (use resourceId or displayName from the resources
+              array to identify the exact object being patched, not just the resource type)
 
-            For each group with 3 or more events:
-            - Sort by activityDateTime ascending
-            - Calculate intervals between consecutive events
-            - Check if the same resource keys are repeatedly targeted
+            For each group, build a target map:
+            - Count how many distinct resource targets the actor patched for this activityType
+            - Count how many times each specific target was patched
+
+            Apply the following classification:
+
+            NOISY NEIGHBOUR (flag this):
+            - The same actor patches the SAME specific resource target 3 or more times
+            - This indicates automation writing the same config repeatedly to the same object
+
+            VALID AUTOMATION (do NOT flag as noisy):
+            - The actor patches many DIFFERENT resource targets of the same type
+            - Example: patching 200 unique device objects is a deployment rollout, not noise
+            - High unique-target-count with low repeat-per-target-count = valid automation
+
+            For flagged groups:
+            - Sort events by activityDateTime ascending
+            - Calculate intervals between consecutive patches to the same target
             - Classify interval pattern as: hourly, daily, weekly, or irregular
 
-            A strong noisy neighbour signal requires ALL of:
-            1. Repeated write activity by the same actor (>= 3 occurrences)
-            2. Consistent interval pattern (hourly / daily / weekly)
-            3. Same resource key(s) repeatedly targeted
+            A confirmed noisy neighbour signal requires ALL of:
+            1. Same actor patches the same specific resource target >= 3 times
+            2. activityOperationType is 'patch' (or activityType contains 'Patch')
+            3. Consistent interval pattern (hourly / daily / weekly) strengthens confidence
 
-            If only one signal is present, confidence is low.
-            If no repeated write activity exists, verdict is No.
+            If only patches to unique targets are found, verdict must be No or Inconclusive.
+            If no patch events exist, verdict is No.
 
             # Step 4 - Subject actor check
 
@@ -147,13 +167,16 @@ SkillGroups:
 
             # Step 5 - Optional focused deep dive
 
-            If overall confidence is medium and the top evidence actor warrants
-            more investigation, call GetIntuneAuditEvents again with:
-            - A tighter filter targeting that specific actor
+            If confidence is medium or you need to confirm a specific actor/target
+            pair, call GetIntuneAuditEvents again with:
+            - A tighter filter targeting that specific actor's patch operations
             - $top: 100
-            - Full $select including resources and modifiedProperties
-            Use this extra data to check for idempotent property overwrites
-            (same newValue set repeatedly), which confirms noisy behaviour.
+            - $select: id,displayName,componentName,activityDateTime,activityType,activityOperationType,actor,resources
+            Use this extra data to:
+            - Confirm the specific resource targets (IDs and display names)
+            - Check modifiedProperties for idempotent overwrites (same newValue
+              written repeatedly to the same property on the same resource)
+            - Verify the target is the same object each time, not a different one
             Limit deep dive to one additional API call.
 
             # Step 6 - Output
@@ -181,9 +204,15 @@ SkillGroups:
 
             ## Top Evidence
             Table with columns:
-            Actor | Actor Type | Activity Type | Resource Type | Occurrences | Interval Pattern | Why it indicates noise
+            Actor | Actor Type | Activity Type | Resource Type | Target Name/ID | Patch Count on Same Target | Unique Targets Patched | Interval Pattern | Why it indicates noise
 
-            Maximum 10 rows, sorted by strongest evidence.
+            - Target Name/ID: the specific resource that was patched repeatedly
+            - Patch Count on Same Target: number of times that exact target was patched
+            - Unique Targets Patched: total distinct targets this actor patched for this activity
+              (if Unique Targets >> Patch Count on Same Target, lean toward valid automation)
+
+            Maximum 10 rows, sorted by highest Patch Count on Same Target descending.
+            Exclude rows where Patch Count on Same Target is less than 3.
 
             ## Subject Actor Result
             If a subject actor was checked, provide their specific verdict and reason.
