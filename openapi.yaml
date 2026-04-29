@@ -1,0 +1,301 @@
+openapi: 3.0.0
+
+info:
+  title: Microsoft Intune Audit Events
+  description: >-
+    Retrieves Microsoft Intune audit events from the Microsoft Graph API.
+    Used by the Noisy Neighbour Agent to analyze repetitive configuration
+    changes that indicate noisy neighbour automation patterns in multi-tenant
+    Microsoft environments.
+  version: 1.0.0
+
+servers:
+  - url: https://graph.microsoft.com/v1.0
+    description: Microsoft Graph API
+
+paths:
+  /deviceManagement/auditEvents:
+    get:
+      operationId: GetIntuneAuditEvents
+      summary: Retrieve Intune audit events
+      description: >-
+        Retrieves a list of Microsoft Intune audit events filtered by date range
+        and other optional criteria. Supports OData query parameters for
+        filtering, selecting fields, ordering, and pagination. Use the $filter
+        parameter with activityDateTime to restrict results to the desired time
+        window (e.g., last 6 months). Use $skipToken for retrieving subsequent
+        pages when @odata.nextLink is present in the response.
+      x-openai-isConsequential: false
+      parameters:
+        - name: $filter
+          in: query
+          required: false
+          description: >-
+            OData filter expression to restrict the audit events returned.
+            To retrieve the last 6 months, use:
+            activityDateTime ge 2024-10-28T00:00:00Z
+            (replace the date with today minus 180 days).
+            Additional filter examples:
+            - activityResult eq 'success'
+            - activityType eq 'Patch ManagedDevice'
+            - actor/userPrincipalName eq 'admin@contoso.com'
+          schema:
+            type: string
+            example: "activityDateTime ge 2024-10-28T00:00:00Z"
+        - name: $select
+          in: query
+          required: false
+          description: >-
+            Comma-separated list of properties to include in the response.
+            Recommended value for noisy neighbour analysis:
+            id,displayName,componentName,activityDateTime,activityType,
+            activityOperationType,activityResult,correlationId,actor,resources,category
+          schema:
+            type: string
+            example: "id,displayName,componentName,activityDateTime,activityType,activityOperationType,activityResult,correlationId,actor,resources,category"
+        - name: $orderby
+          in: query
+          required: false
+          description: >-
+            OData orderby expression. Use 'activityDateTime asc' to get events
+            in chronological order, which is required for interval analysis.
+          schema:
+            type: string
+            example: "activityDateTime asc"
+        - name: $top
+          in: query
+          required: false
+          description: >-
+            Maximum number of events to return per page. The maximum allowed
+            value is 1000. Use 999 to stay within limits while maximizing
+            results per request.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 999
+        - name: $skipToken
+          in: query
+          required: false
+          description: >-
+            Pagination token for retrieving the next page of results. Extract
+            this value from the @odata.nextLink URL returned in a previous
+            response to continue retrieving events.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: >-
+            Successfully retrieved Intune audit events. The response contains
+            a collection of audit event objects. If more pages are available,
+            an @odata.nextLink property is included with the URL for the next page.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  "@odata.context":
+                    type: string
+                    description: OData context URL
+                  "@odata.nextLink":
+                    type: string
+                    description: >-
+                      URL for retrieving the next page of results. Present only
+                      when additional pages are available. Extract the skipToken
+                      query parameter value from this URL to use with the
+                      $skipToken parameter.
+                  value:
+                    type: array
+                    description: Array of Intune audit event objects
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          description: Unique identifier of the audit event (GUID)
+                        displayName:
+                          type: string
+                          description: >-
+                            Human-readable display name of the audit activity
+                            (e.g., "Patch DeviceConfiguration")
+                        componentName:
+                          type: string
+                          description: >-
+                            Name of the Intune component that generated this
+                            audit event (e.g., "DeviceConfiguration",
+                            "ManagedDevice", "CompliancePolicy")
+                        category:
+                          type: string
+                          description: >-
+                            Audit category for the event
+                            (e.g., "DeviceConfiguration", "Application")
+                        activityDateTime:
+                          type: string
+                          format: date-time
+                          description: >-
+                            ISO 8601 timestamp when the activity occurred.
+                            Used to calculate intervals between events for
+                            noisy neighbour pattern detection.
+                        activityType:
+                          type: string
+                          description: >-
+                            Type of activity performed (e.g., "Patch DeviceConfiguration",
+                            "Create ManagedDevice", "Delete CompliancePolicy").
+                            This field is key for grouping events by action type.
+                        activityOperationType:
+                          type: string
+                          description: >-
+                            Operation type: create, delete, patch, action,
+                            setReference, deleteReference, or unknownFutureValue
+                        activityResult:
+                          type: string
+                          description: >-
+                            Result of the activity: success, failure,
+                            notApplicable, or unknownFutureValue
+                        correlationId:
+                          type: string
+                          description: >-
+                            GUID correlating related audit events from a single
+                            operation. Useful for linking events that were
+                            triggered together by an automation.
+                        actor:
+                          type: object
+                          description: >-
+                            Identity of the account or application that triggered
+                            the audit event. Key field for identifying noisy
+                            neighbour actors.
+                          properties:
+                            type:
+                              type: string
+                              description: >-
+                                Actor type identifier string from the API
+                            auditActorType:
+                              type: string
+                              description: >-
+                                Type of actor: user, application, or unknown.
+                                'application' indicates a service principal or
+                                managed identity (likely automation).
+                            userPrincipalName:
+                              type: string
+                              description: >-
+                                UPN of the user who performed the action.
+                                Present when auditActorType is 'user'.
+                            userId:
+                              type: string
+                              description: Azure AD object ID of the user
+                            applicationId:
+                              type: string
+                              description: >-
+                                Azure AD application (client) ID of the service
+                                principal. Present when auditActorType is
+                                'application'. Key for identifying automated actors.
+                            applicationDisplayName:
+                              type: string
+                              description: >-
+                                Display name of the application / service principal.
+                                Present when auditActorType is 'application'.
+                                Examples: "Microsoft Intune", "Company Portal",
+                                or a custom automation app name.
+                            servicePrincipalName:
+                              type: string
+                              description: Service principal name if applicable
+                            ipAddress:
+                              type: string
+                              description: >-
+                                IP address from which the action was performed.
+                                Useful for identifying automation servers.
+                            userPermissions:
+                              type: array
+                              description: Permissions the actor had at time of the event
+                              items:
+                                type: string
+                            userRoleScopeTags:
+                              type: array
+                              description: Role scope tags assigned to the actor
+                              items:
+                                type: object
+                                properties:
+                                  displayName:
+                                    type: string
+                                  roleScopeTagId:
+                                    type: string
+                        resources:
+                          type: array
+                          description: >-
+                            List of resources affected by this audit event.
+                            Each resource includes the modified properties with
+                            old and new values — critical for detecting whether
+                            an automation always sets the same values.
+                          items:
+                            type: object
+                            properties:
+                              displayName:
+                                type: string
+                                description: Display name of the affected resource
+                              type:
+                                type: string
+                                description: >-
+                                  Resource type (e.g., "DeviceConfiguration",
+                                  "ManagedDevice", "DeviceCompliancePolicy")
+                              resourceId:
+                                type: string
+                                description: Unique identifier of the affected resource
+                              modifiedProperties:
+                                type: array
+                                description: >-
+                                  List of properties that were changed in this
+                                  event. Compare newValue across multiple events
+                                  for the same actor + property to confirm
+                                  noisy neighbour idempotent overwrites.
+                                items:
+                                  type: object
+                                  properties:
+                                    displayName:
+                                      type: string
+                                      description: >-
+                                        Name of the property that was modified
+                                        (e.g., "deviceName", "complianceState",
+                                        "passwordRequired")
+                                    oldValue:
+                                      type: string
+                                      description: >-
+                                        Value of the property before the change.
+                                        May be null for newly created resources.
+                                    newValue:
+                                      type: string
+                                      description: >-
+                                        Value the property was set to. If this
+                                        value is consistently the same across
+                                        multiple events, it confirms idempotent
+                                        noisy neighbour behavior.
+        '400':
+          description: Bad request — invalid OData filter syntax or parameter value
+        '401':
+          description: Unauthorized — missing or invalid Azure AD access token
+        '403':
+          description: >-
+            Forbidden — the authenticated identity does not have the required
+            permissions. Requires one of: DeviceManagementApps.Read.All,
+            DeviceManagementConfiguration.Read.All,
+            DeviceManagementManagedDevices.Read.All, or
+            DeviceManagementRBAC.Read.All
+        '429':
+          description: >-
+            Too many requests — Microsoft Graph API throttling limit reached.
+            Retry after the interval specified in the Retry-After header.
+        '500':
+          description: Internal server error from Microsoft Graph API
+
+components: {}
+
+security: []
+
+x-example-prompts:
+  - Get Intune audit events from the last 6 months
+  - Retrieve all Intune audit events since October 2024
+  - Get Intune audit events where the actor is a service principal
+  - Retrieve Intune audit events filtered by activityType 'Patch DeviceConfiguration'
+  - Get the last 999 Intune audit events ordered by date ascending
+  - Retrieve Intune audit events for patch operations in the last 180 days
+  - Get all successful Intune audit events from the past month
+  - Retrieve Intune audit events where changes were made by automation accounts

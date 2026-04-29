@@ -1,0 +1,193 @@
+# Noisy Neighbour Agent - Microsoft Security Copilot Plugin
+# Detects automation-driven repetitive Intune configuration changes in multi-tenant environments
+
+Descriptor:
+  Name: NoisyNeighbourAgent
+  DisplayName: Noisy Neighbour Agent - Intune Automation Pattern Detector
+  Description: >-
+    Analyzes Microsoft Intune audit logs to detect noisy neighbour automation
+    patterns. Identifies accounts or automations that repeatedly update the
+    same settings at consistent intervals, helping administrators remediate
+    unwanted behavior in multi-tenant environments.
+  DescriptionForModel: >-
+    This plugin retrieves Microsoft Intune audit events via the Microsoft Graph
+    API and uses AI-powered analysis to detect repetitive automated configuration
+    changes (noisy neighbour behavior). It identifies actors (users or service
+    principals) performing the same Intune operations at regular intervals
+    (hourly, daily, or weekly) with consistent property values, which can degrade
+    platform performance across all tenants in a Microsoft multi-tenant environment.
+    Use this plugin to answer questions about repetitive Intune changes, which
+    automation accounts are causing noise, and what remediation steps are needed.
+  Icon: https://raw.githubusercontent.com/schenardie/Noisy-Neighbour-Agent/main/icon.png
+
+  Authorization:
+    Type: AADDelegated
+    EntraScopes: https://graph.microsoft.com/.default
+
+  SupportedAuthTypes:
+    - AADDelegated
+
+SkillGroups:
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # API Skill Group – calls the Microsoft Graph API to retrieve Intune audit logs
+  # ─────────────────────────────────────────────────────────────────────────────
+  - Format: API
+    Settings:
+      OpenApiSpecUrl: https://raw.githubusercontent.com/schenardie/Noisy-Neighbour-Agent/main/openapi.yaml
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # GPT Skill Group – AI-powered analysis of retrieved audit log JSON
+  # ─────────────────────────────────────────────────────────────────────────────
+  - Format: GPT
+    Skills:
+
+      # ── Skill 1: Analyze a provided batch of audit log JSON for patterns ──────
+      - Name: AnalyzeIntuneNoisyNeighbours
+        DisplayName: Analyze Intune Audit Logs for Noisy Neighbour Patterns
+        Description: >-
+          Analyzes a batch of Microsoft Intune audit log data (JSON) to detect
+          noisy neighbour patterns — actors repeatedly updating the same settings
+          at consistent intervals. Identifies which accounts or automations are
+          responsible and what changes they are making.
+        DescriptionForModel: >-
+          Accepts raw Microsoft Intune audit event JSON (from the Graph API
+          /deviceManagement/auditEvents endpoint) and performs deep pattern
+          analysis to detect noisy neighbour behavior. Groups events by actor
+          and activity type, measures time intervals between consecutive events,
+          checks for consistent property values being set, and classifies each
+          pattern as hourly, daily, weekly, or other. Outputs a structured
+          report suitable for security administrators.
+        ExamplePrompts:
+          - Analyze these Intune audit logs for noisy neighbour patterns
+          - Find automation patterns in this Intune audit data
+          - Which accounts are repeatedly making the same Intune changes?
+          - Identify noisy neighbour behavior in these Intune audit events
+          - Analyze Intune audit logs for repetitive automated changes
+          - Are there any bots or automations repeatedly changing Intune settings?
+        Inputs:
+          - Name: auditLogData
+            Description: >-
+              JSON string of Microsoft Intune audit events retrieved from the
+              Microsoft Graph API. Should include activityDateTime, activityType,
+              activityResult, actor (with userPrincipalName or
+              applicationDisplayName), resources (with modifiedProperties), and
+              displayName fields. Paste the full JSON response value array.
+            Required: true
+        Settings:
+          ModelName: gpt-4o
+          Template: |-
+            You are a Microsoft Intune security analyst specializing in identifying
+            noisy neighbour automation patterns in multi-tenant environments.
+
+            **Background**: Microsoft treats certain behavior patterns as "noisy
+            neighbours" when an account or automation repeatedly modifies the same
+            Intune settings with the same values at consistent intervals (every hour,
+            day, or week). This behavior consumes disproportionate platform resources
+            and can degrade performance for all tenants in the shared infrastructure.
+
+            **Audit Log Data to Analyze**:
+            {{auditLogData}}
+
+            **Data Integrity Rules (MANDATORY)**:
+            - Use ONLY the provided auditLogData. Never invent, infer, or simulate actors, counts, dates, or events.
+            - If auditLogData is empty, missing, malformed, or not valid JSON, STOP and return:
+              "Unable to analyze tenant data: no valid auditLogData was provided."
+            - Every reported actor/activity/count MUST be traceable to records in auditLogData.
+            - Never use placeholder domains/names (for example: contoso, helpdesk@contoso.com, j.smith@contoso.com).
+            - If fewer than 3 events exist for a group, do not label it a confirmed noisy neighbour.
+
+            **Analysis Instructions**:
+
+            1. **Parse and group** all events by the combination of:
+               - Actor identity: `actor.userPrincipalName` (for human users) OR
+                 `actor.applicationDisplayName` + `actor.applicationId` (for service
+                 principals / managed identities)
+               - `activityType`
+               - Resource type (`resources[].auditResourceType` OR `resources[].type`)
+
+            2. **For each group with 3 or more occurrences**, perform:
+               a. Sort events by `activityDateTime` ascending
+               b. Calculate time intervals (in seconds) between consecutive events
+               c. Compute the mean and standard deviation of intervals
+               d. Flag as a CONSISTENT PATTERN if: coefficient of variation
+                  (std_dev / mean) < 0.25 (i.e., less than 25% variance)
+               e. Classify the interval:
+                  - Hourly: mean interval 3000–4200 seconds (~1 hour)
+                  - Daily: mean interval 82800–90000 seconds (~24 hours)
+                  - Weekly: mean interval 590000–620000 seconds (~7 days)
+                  - Other: any other consistent interval (state it in minutes/hours)
+               f. Check `resources[].modifiedProperties`: confirm whether the same
+                  `newValue` is being set for the same property across events (true
+                  for a noisy neighbour — values are consistent/idempotent)
+
+            3. **Rank findings** by total occurrence count (highest first)
+
+            4. **For each confirmed noisy neighbour pattern**, document:
+               - Actor identity (UPN for users, App Display Name + App ID for SPs)
+               - Actor type: Human User / Service Principal / Managed Identity / Unknown
+               - Activity type and display name
+               - Resource type and affected resource names
+               - Consistent properties being set and their repeated values
+               - Pattern interval classification with exact average interval
+               - Total occurrences and date range (first to last event)
+               - Business impact: Low (< 10/day), Medium (10–50/day), High (> 50/day)
+
+            **Output Format**:
+
+            ## Noisy Neighbour Analysis Report
+
+            ### Executive Summary
+            Provide a 3–5 sentence overview: how many events were analyzed, how many
+            distinct patterns were found, overall severity, and top recommendation.
+
+            ### Detected Noisy Neighbour Patterns
+            *(sorted by frequency, highest first)*
+
+            For each pattern use this exact format:
+
+            ---
+            #### Pattern [N]: [Actor Name] — [Activity Type]
+            | Field | Value |
+            |---|---|
+            | **Actor** | [name] |
+            | **Actor Type** | [Human User / Service Principal / Managed Identity] |
+            | **Application ID** | [GUID or N/A] |
+            | **Activity** | [activityType] — [displayName] |
+            | **Resource Type** | [resource type] |
+            | **Pattern Interval** | [hourly / daily / weekly / other: X minutes] |
+            | **Average Interval** | [exact average, e.g., 62 minutes] |
+            | **Occurrences** | [count] times |
+            | **Date Range** | [first datetime] → [last datetime] |
+            | **Impact Level** | [🔴 High / 🟡 Medium / 🟢 Low] |
+
+            **Repeated Property Changes**:
+            - `[propertyName]`: always set to `[value]`
+            - *(list all consistent properties)*
+
+            **Why This Is a Noisy Neighbour**:
+            [1–2 sentence explanation of why this pattern is problematic]
+
+            ---
+
+            ### Patterns Requiring Further Investigation
+            List any groups with >= 3 occurrences that did NOT meet the consistency
+            threshold but may still warrant review. Explain why they are ambiguous.
+
+            ### Recommended Actions
+            For each confirmed pattern, provide specific remediation steps:
+            1. How to identify and contact the responsible team/owner
+            2. How to disable or throttle the automation
+            3. How to verify the changes are actually needed (idempotency check)
+            4. Microsoft support escalation path if the noisy neighbour behavior
+               originated from a Microsoft-managed component
+
+            ### Summary Table
+            | # | Actor | Activity | Interval | Count | Impact |
+            |---|---|---|---|---|---|
+            | 1 | ... | ... | ... | ... | ... |
+
+            ### Data Validation Footer (REQUIRED)
+            - Total input events parsed: [number]
+            - Unique actors parsed: [number]
+            - Evidence check: "All actors and counts in this report are derived from provided auditLogData only."

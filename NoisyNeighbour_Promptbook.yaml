@@ -1,0 +1,137 @@
+# Noisy Neighbour Promptbook
+# A guided, step-by-step Security Copilot promptbook for identifying Intune
+# noisy neighbour automation patterns using a reliable API-first workflow.
+#
+# How to use:
+#   1. Install this promptbook in Microsoft Security Copilot
+#   2. Ensure the NoisyNeighbourAgent plugin is enabled
+#   3. Run the promptbook step by step
+#   4. Use the raw JSON retrieval path first, then analyze only retrieved data
+
+Name: NoisyNeighbour_Promptbook
+DisplayName: Intune Noisy Neighbour Detection - API First 90 Day Analysis
+Description: >-
+  A step-by-step Security Copilot promptbook that retrieves Microsoft Intune
+  audit logs for the last 90 days using the verified GetIntuneAuditEvents API
+  path, then analyzes only the retrieved data for noisy neighbour automation
+  patterns. Use this promptbook when you want a reliable workflow that avoids
+  hallucinated actors or placeholder domains.
+
+Prompts:
+  - Name: Step1_CalculateDateRange
+    Content: |-
+      Calculate today's UTC date/time and the date/time exactly 90 days ago.
+      Format both dates in ISO 8601 UTC format (YYYY-MM-DDTHH:MM:SSZ).
+      Show both values clearly labeled as:
+      - Start Date
+      - End Date
+
+      Do not estimate based on prior conversation state. Calculate them fresh.
+
+  - Name: Step2_ProbeRawAuditJson
+    Content: |-
+      Using NoisyNeighbourAgent, call GetIntuneAuditEvents with:
+      - $top=5
+      - $orderby=activityDateTime desc
+
+      Return raw JSON only.
+
+      Do not summarize, analyze, or invent any users. I want the exact API
+      response body only.
+
+  - Name: Step3_RetrieveAuditLogs_Page1Raw
+    Content: |-
+      Using NoisyNeighbourAgent, call GetIntuneAuditEvents with:
+      - $filter=activityDateTime ge [Start Date from Step 1] and activityDateTime le [End Date from Step 1]
+      - $select=id,displayName,componentName,activityDateTime,activityType,activityOperationType,activityResult,correlationId,actor,resources,category
+      - $orderby=activityDateTime asc
+      - $top=999
+
+      Return raw JSON only.
+
+      Do not summarize. Do not infer missing pages. Do not replace actor names.
+
+  - Name: Step4_RetrieveRemainingPagesRaw
+    Content: |-
+      If the previous raw JSON response included @odata.nextLink, continue
+      retrieving additional pages using GetIntuneAuditEvents with the $skipToken
+      extracted from that @odata.nextLink.
+
+      Return raw JSON only for each page.
+
+      Keep going until no @odata.nextLink remains.
+
+      If there was no @odata.nextLink, say exactly:
+      "Single page only. No additional raw JSON pages required."
+
+  - Name: Step5_ValidateRetrievedData
+    Content: |-
+      Based only on the raw JSON already returned in previous steps, provide a
+      factual retrieval check.
+
+      Include only:
+      1. Total number of events retrieved
+      2. Earliest activityDateTime in the retrieved data
+      3. Latest activityDateTime in the retrieved data
+      4. Up to 10 actual actor identifiers copied exactly from the JSON
+      5. Whether any actor identifiers contain placeholder domains such as contoso.com or tenantdomain.com
+
+      If placeholder domains appear but were not present in the raw JSON,
+      explicitly state that hallucination occurred and stop.
+
+  - Name: Step6_AnalyzePatternsFromRetrievedJson
+    Content: |-
+      Using NoisyNeighbourAgent, call AnalyzeIntuneNoisyNeighbours.
+
+      Use only the audit events that were actually returned in the raw JSON from
+      previous steps.
+
+      Pass the complete retrieved JSON value array as auditLogData.
+
+      Requirements:
+      - Do not add actors, counts, dates, or domains that are not present in the JSON
+      - If the dataset is too small, say so explicitly
+      - If fewer than 3 events exist for a grouping, do not call it a confirmed noisy neighbour
+
+  - Name: Step7_FrequentActorSummary
+    Content: |-
+      Based only on the retrieved JSON and the analysis output, create a compact
+      frequent actor summary.
+
+      Render this table:
+      | Actor Name | Actor Type | Frequent Action Types | Event Count | First Seen (UTC) | Last Seen (UTC) |
+      |---|---|---|---:|---|---|
+
+      Rules:
+      - Use only actors present in retrieved JSON
+      - Sort by Event Count descending
+      - If there are fewer than 3 events total, say the dataset is insufficient
+
+  - Name: Step8_RemediationPlan
+    Content: |-
+      Based only on confirmed patterns from the analysis output, create a
+      remediation plan.
+
+      For each confirmed pattern include:
+      1. Likely owner identification path
+      2. Whether the actor is a user or service principal
+      3. Suggested throttling, change-detection, or disablement action
+      4. How to verify the repetitive behavior stopped
+
+      If no confirmed patterns exist, say that no remediation plan is needed yet.
+
+  - Name: Step9_ExecutiveSummary
+    Content: |-
+      Create a concise executive summary using only facts supported by the raw
+      JSON retrieval and the analysis output.
+
+      Include:
+      - Date range analyzed
+      - Total events retrieved
+      - Whether data came from a single page or multiple pages
+      - Number of confirmed noisy neighbour patterns
+      - Top actors only if they appeared in the retrieved JSON
+      - Immediate next step
+
+      If any prior step used placeholder identities not present in the raw JSON,
+      explicitly mark the run as invalid.
