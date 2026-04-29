@@ -265,7 +265,7 @@ SkillGroups:
         Inputs:
           - Name: UserRequest
             Description: User request describing the noisy neighbour analysis needed.
-            DefaultValue: ''
+            DefaultValue: 'Run a noisy neighbour report for the last 90 days'
             Required: true
         SuggestedPrompts:
           - Prompt: Run a noisy neighbour report for the last 90 days.
